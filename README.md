@@ -84,3 +84,58 @@ python src/read_stream.py --count 1 --raw
 ```
 
 If the connection drops, the script retries with exponential backoff (1s, 2s, 4s, ... up to 60s) and resumes from the last event it saw. Press Ctrl-C to stop early.
+
+## Produce the stream into Kafka
+
+`src/producer.py` reads the same stream and publishes each event to the Kafka topic `recentchange`. The key is the event's `wiki` (e.g. `enwiki`) and the value is the event's JSON.
+
+Install dependencies as above, and start the broker (see [Run Kafka locally](#run-kafka-locally)).
+
+Create the topic explicitly with 3 partitions. The broker would auto-create it on first write, but with its default settings rather than ours:
+
+```sh
+docker compose exec kafka /opt/kafka/bin/kafka-topics.sh \
+  --bootstrap-server localhost:9092 \
+  --create --if-not-exists --topic recentchange --partitions 3 --replication-factor 1
+```
+
+Run the producer. It runs until Ctrl-C, or stops after `--count` events:
+
+```sh
+python src/producer.py
+python src/producer.py --count 500
+```
+
+Every 100 messages it prints a stats line. `sent` counts messages the broker has acknowledged, so it can lag `produced` a little:
+
+```
+[stats] produced=200 sent=199 failed=0 rate=29.7 msg/s
+```
+
+On Ctrl-C it waits up to 30 seconds for in-flight messages to be delivered before exiting.
+
+Settings come from the environment or `.env` (see `.env.example`):
+
+| Variable | Default |
+| --- | --- |
+| `KAFKA_BOOTSTRAP_SERVERS` | `localhost:9092` |
+| `KAFKA_TOPIC` | `recentchange` |
+| `WIKI_USER_AGENT` | `kafka-wikimedia-pipeline/0.1 (...)` |
+
+Check that messages arrived, with their key and partition:
+
+```sh
+docker compose exec kafka /opt/kafka/bin/kafka-console-consumer.sh \
+  --bootstrap-server localhost:9092 --topic recentchange \
+  --from-beginning --max-messages 5 \
+  --formatter-property print.key=true --formatter-property print.partition=true
+```
+
+## Run the tests
+
+The tests don't need a broker:
+
+```sh
+pip install -r requirements-dev.txt
+pytest
+```
